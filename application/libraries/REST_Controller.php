@@ -8,9 +8,10 @@ class REST_Controller extends Controller {
     private $_method;
     private $_format;
     
-    private $_get_args;
-    private $_put_args;
-    private $_args;
+    private $_get_args = array();
+    private $_put_args = array();
+    private $_delete_args = array();
+    private $_args = array();
     
     // List all supported methods, the first will be the default format
     private $_supported_formats = array(
@@ -50,11 +51,20 @@ class REST_Controller extends Controller {
         // Set up our GET variables
     	$this->_get_args = $this->uri->ruri_to_assoc();
     	
-    	// Set up out PUT variables
-    	parse_str(file_get_contents('php://input'), $this->_put_args);
-    	
+		if($this->_method == 'put')
+		{		
+	    	// Set up out PUT variables
+	    	parse_str(file_get_contents('php://input'), $this->_put_args);
+		}
+		
+		if($this->_method == 'delete')
+		{		
+	    	// Set up out DELETE variables
+	    	parse_str(file_get_contents('php://input'), $this->_delete_args);
+		}
+		
     	// Merge both for one mega-args variable
-    	$this->_args = array_merge($this->_get_args, $this->_put_args);
+    	$this->_args = array_merge($this->_get_args, $this->_put_args, $this->_delete_args);
     	
     	// Which format should the data be returned in?
 	    $this->_format = $this->_detect_format();
@@ -206,6 +216,11 @@ class REST_Controller extends Controller {
     public function put($key)
     {
     	return array_key_exists($key, $this->_put_args) ? $this->input->xss_clean( $this->_put_args[$key] ) : FALSE ;
+    }
+    
+    public function delete($key)
+    {
+    	return array_key_exists($key, $this->_delete_args) ? $this->input->xss_clean( $this->_delete_args[$key] ) : FALSE ;
     }
     
     // SECURITY FUNCTIONS ---------------------------------------------------------
@@ -517,4 +532,3 @@ class REST_Controller extends Controller {
     
     
 }
-?>
