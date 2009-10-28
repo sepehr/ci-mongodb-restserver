@@ -46,7 +46,7 @@ class REST_Controller extends Controller {
         }
         
         // Set caching based on the REST cache config item
-        $this->output->cache( $this->config->item('rest_cache') );
+        //$this->output->cache( $this->config->item('rest_cache') );
         
         // Set up our GET variables
     	$this->_get_args = $this->uri->ruri_to_assoc();
