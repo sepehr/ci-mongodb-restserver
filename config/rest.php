@@ -22,7 +22,7 @@ $config['rest_default_format'] = 'xml';
 |	Default: false
 |
 */
-$config['enable_emulate_request'] = TRUE;
+$config['enable_emulate_request'] = FALSE;
 
 
 /*
@@ -47,7 +47,7 @@ $config['rest_realm'] = 'REST API';
 |	'' = no login required, 'basic' = unsecure login, 'digest' = more secure login
 |
 */
-$config['rest_auth'] = false;
+$config['rest_auth'] = FALSE;
 
 /*
 |--------------------------------------------------------------------------
@@ -99,7 +99,7 @@ $config['rest_valid_logins'] = array('admin' => '1234');
 |	 restrict certain methods to IPs in your whitelist
 |
 */
-$config['rest_ip_whitelist_enabled'] = false;
+$config['rest_ip_whitelist_enabled'] = FALSE;
 
 /*
 |--------------------------------------------------------------------------
@@ -118,6 +118,20 @@ $config['rest_ip_whitelist'] = '';
 
 /*
 |--------------------------------------------------------------------------
+| REST Database Backend Type
+|--------------------------------------------------------------------------
+|
+| Inicates whether to use MongoDB as REST server database backend for API
+| keys, logs and limits. If set to TRUE it requires MongoDB Active Record
+| library to be installed and properly configured.
+|
+|	FALSE
+|
+*/
+$config['rest_use_mongodb'] = FALSE;
+
+/*
+|--------------------------------------------------------------------------
 | REST Database Group
 |--------------------------------------------------------------------------
 |
@@ -128,18 +142,20 @@ $config['rest_ip_whitelist'] = '';
 |
 */
 $config['rest_database_group'] = 'default';
+$config['rest_mongodb_group']  = 'default';
 
 /*
 |--------------------------------------------------------------------------
-| REST API Keys Table Name
+| REST API Keys Table/Collection Name
 |--------------------------------------------------------------------------
 |
-| The table name in your database that stores API Keys.
+| The table/collection name in your database that stores API Keys.
 |
 |	'keys'
 |
 */
-$config['rest_keys_table'] = 'keys';
+$config['rest_keys_table'] = 'api_keys';
+$config['rest_keys_collection'] = 'api_keys';
 
 /*
 |--------------------------------------------------------------------------
@@ -190,15 +206,16 @@ $config['rest_key_name'] = 'X-API-KEY';
 
 /*
 |--------------------------------------------------------------------------
-| REST API Logs Table Name
+| REST API Logs Table/Collection Name
 |--------------------------------------------------------------------------
 |
-| The table name in your database that stores logs.
+| The table/collection name in your database that stores logs.
 |
 |	'logs'
 |
 */
-$config['rest_logs_table'] = 'logs';
+$config['rest_logs_table'] = 'api_logs';
+$config['rest_logs_collection'] = 'api_logs';
 
 /*
 |--------------------------------------------------------------------------
@@ -228,15 +245,16 @@ $config['rest_enable_logging'] = FALSE;
 
 /*
 |--------------------------------------------------------------------------
-| REST API Limits Table Name
+| REST API Limits Table/Collection Name
 |--------------------------------------------------------------------------
 |
-| The table name in your database that stores limits.
+| The table/collection name in your database that stores limits.
 |
 |	'logs'
 |
 */
-$config['rest_limits_table'] = 'limits';
+$config['rest_limits_table'] = 'api_limits';
+$config['rest_limits_collection'] = 'api_limits';
 
 /*
 |--------------------------------------------------------------------------
