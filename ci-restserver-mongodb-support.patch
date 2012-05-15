@@ -1,0 +1,816 @@
+From 0f76004e851ce9048d557aaa93918354ec0a1b68 Mon Sep 17 00:00:00 2001
+From: Sepehr Lajevardi <me@sepehr.ws>
+Date: Tue, 15 May 2012 20:26:42 +0430
+Subject: [PATCH] Added optional support for MongoDB as REST Server database
+ backend for API keys, usage logs and limits.
+
+---
+ application/config/rest.php               |   58 ++++--
+ application/libraries/REST_Controller.php |  280 ++++++++++++++++++++---------
+ 2 files changed, 237 insertions(+), 101 deletions(-)
+
+diff --git a/application/config/rest.php b/application/config/rest.php
+index b26504f..e30e12c 100644
+--- a/application/config/rest.php
++++ b/application/config/rest.php
+@@ -22,7 +22,7 @@ $config['rest_default_format'] = 'xml';
+ |	Default: false
+ |
+ */
+-$config['enable_emulate_request'] = TRUE;
++$config['enable_emulate_request'] = FALSE;
+ 
+ 
+ /*
+@@ -47,7 +47,7 @@ $config['rest_realm'] = 'REST API';
+ |	'' = no login required, 'basic' = unsecure login, 'digest' = more secure login
+ |
+ */
+-$config['rest_auth'] = false;
++$config['rest_auth'] = FALSE;
+ 
+ /*
+ |--------------------------------------------------------------------------
+@@ -58,14 +58,14 @@ $config['rest_auth'] = false;
+ |
+ | Set as many config entries as needed.  Any methods not set will use the default 'rest_auth' config value.
+ |
+-| example:  
+-| 
++| example:
++|
+ |			$config['auth_override_class_method']['deals']['view'] = 'none';
+ |			$config['auth_override_class_method']['deals']['insert'] = 'digest';
+-|			$config['auth_override_class_method']['accounts']['user'] = 'basic'; 
++|			$config['auth_override_class_method']['accounts']['user'] = 'basic';
+ |
+ | Here 'deals' and 'accounts' are controller names, 'view', 'insert' and 'user' are methods within. (NOTE: leave off the '_get' or '_post' from the end of the method name)
+-| Acceptable values are; 'none', 'digest' and 'basic'.  
++| Acceptable values are; 'none', 'digest' and 'basic'.
+ |
+ */
+ // $config['auth_override_class_method']['deals']['view'] = 'none';
+@@ -99,7 +99,7 @@ $config['rest_valid_logins'] = array('admin' => '1234');
+ |	 restrict certain methods to IPs in your whitelist
+ |
+ */
+-$config['rest_ip_whitelist_enabled'] = false;
++$config['rest_ip_whitelist_enabled'] = FALSE;
+ 
+ /*
+ |--------------------------------------------------------------------------
+@@ -118,6 +118,20 @@ $config['rest_ip_whitelist'] = '';
+ 
+ /*
+ |--------------------------------------------------------------------------
++| REST Database Backend Type
++|--------------------------------------------------------------------------
++|
++| Inicates whether to use MongoDB as REST server database backend for API
++| keys, logs and limits. If set to TRUE it requires MongoDB Active Record
++| library to be installed and properly configured.
++|
++|	FALSE
++|
++*/
++$config['rest_use_mongodb'] = FALSE;
++
++/*
++|--------------------------------------------------------------------------
+ | REST Database Group
+ |--------------------------------------------------------------------------
+ |
+@@ -128,18 +142,20 @@ $config['rest_ip_whitelist'] = '';
+ |
+ */
+ $config['rest_database_group'] = 'default';
++$config['rest_mongodb_group']  = 'default';
+ 
+ /*
+ |--------------------------------------------------------------------------
+-| REST API Keys Table Name
++| REST API Keys Table/Collection Name
+ |--------------------------------------------------------------------------
+ |
+-| The table name in your database that stores API Keys.
++| The table/collection name in your database that stores API Keys.
+ |
+ |	'keys'
+ |
+ */
+-$config['rest_keys_table'] = 'keys';
++$config['rest_keys_table'] = 'api_keys';
++$config['rest_keys_collection'] = 'api_keys';
+ 
+ /*
+ |--------------------------------------------------------------------------
+@@ -190,15 +206,16 @@ $config['rest_key_name'] = 'X-API-KEY';
+ 
+ /*
+ |--------------------------------------------------------------------------
+-| REST API Logs Table Name
++| REST API Logs Table/Collection Name
+ |--------------------------------------------------------------------------
+ |
+-| The table name in your database that stores logs.
++| The table/collection name in your database that stores logs.
+ |
+ |	'logs'
+ |
+ */
+-$config['rest_logs_table'] = 'logs';
++$config['rest_logs_table'] = 'api_logs';
++$config['rest_logs_collection'] = 'api_logs';
+ 
+ /*
+ |--------------------------------------------------------------------------
+@@ -228,15 +245,16 @@ $config['rest_enable_logging'] = FALSE;
+ 
+ /*
+ |--------------------------------------------------------------------------
+-| REST API Limits Table Name
++| REST API Limits Table/Collection Name
+ |--------------------------------------------------------------------------
+ |
+-| The table name in your database that stores limits.
++| The table/collection name in your database that stores limits.
+ |
+ |	'logs'
+ |
+ */
+-$config['rest_limits_table'] = 'limits';
++$config['rest_limits_table'] = 'api_limits';
++$config['rest_limits_collection'] = 'api_limits';
+ 
+ /*
+ |--------------------------------------------------------------------------
+@@ -279,10 +297,10 @@ $config['rest_ignore_http_accept'] = FALSE;
+ | REST AJAX Only
+ |--------------------------------------------------------------------------
+ |
+-| Set to TRUE to only allow AJAX requests. If TRUE and the request is not 
+-| coming from AJAX, a 505 response with the error message "Only AJAX 
+-| requests are accepted." will be returned. This is good for production 
+-| environments. Set to FALSE to also accept HTTP requests. 
++| Set to TRUE to only allow AJAX requests. If TRUE and the request is not
++| coming from AJAX, a 505 response with the error message "Only AJAX
++| requests are accepted." will be returned. This is good for production
++| environments. Set to FALSE to also accept HTTP requests.
+ |
+ |	FALSE
+ |
+diff --git a/application/libraries/REST_Controller.php b/application/libraries/REST_Controller.php
+index 7bdcc61..20a0671 100644
+--- a/application/libraries/REST_Controller.php
++++ b/application/libraries/REST_Controller.php
+@@ -1,23 +1,43 @@
+ <?php defined('BASEPATH') OR exit('No direct script access allowed');
+ 
+ /**
+- * CodeIgniter Rest Controller
++ * CodeIgniter REST Controller
+  *
+- * A fully RESTful server implementation for CodeIgniter using one library, one config file and one controller.
++ * A fully RESTful server implementation for CodeIgniter with optional MongoDB backend.
+  *
+- * @package        	CodeIgniter
+- * @subpackage    	Libraries
+- * @category    	Libraries
+- * @author        	Phil Sturgeon
+- * @license         http://philsturgeon.co.uk/code/dbad-license
+- * @link			https://github.com/philsturgeon/codeigniter-restserver
+- * @version 		2.6.0
++ * This is a minor fork of Phil Sturgeon's CodeIgniter REST Server library to add support
++ * of MongoDB for API keys, logs and limits. All the credits goes to Phil Sturgeon, it's
++ * just a minor fork.
++ *
++ * @package		CodeIgniter
++ * @author		Sepehr Lajevardi <me@sepehr.ws>
++ * @copyright	Copyright (c) 2012 Sepehr Lajevardi.
++ * @license		http://codeigniter.com/user_guide/license.html
++ * @link		https://github.com/sepehr/ci-mongodb-restserver
++ * @version 	Version 2.6.0
++ * @filesource
++ */
++
++// ------------------------------------------------------------------------
++
++/**
++ * REST Controller class with MongoDB backend support
++ *
++ * All the credits goes to Phil Sturgeon for his CodeIgniter REST Controller
++ * library, this is just a minor fork to provide library with optional MongoDB
++ * support as database backend.
++ *
++ * @package 	CodeIgniter
++ * @subpackage	Libraries
++ * @category	Webservices
++ * @author		Sepehr Lajevardi <me@sepehr.ws>
++ * @link		https://github.com/sepehr/ci-mongodb-restserver
+  */
+-abstract class REST_Controller extends CI_Controller
+-{
++abstract class REST_Controller extends CI_Controller {
++
+ 	/**
+ 	 * This defines the rest format.
+-	 * 
++	 *
+ 	 * Must be overriden it in a controller so that it is set.
+ 	 *
+ 	 * @var string|null
+@@ -27,7 +47,7 @@ abstract class REST_Controller extends CI_Controller
+ 	/**
+ 	 * Defines the list of method properties such as limit, log and level
+ 	 *
+-	 * @var array 
++	 * @var array
+ 	 */
+ 	protected $methods = array();
+ 
+@@ -35,34 +55,34 @@ abstract class REST_Controller extends CI_Controller
+ 	 * General request data and information.
+ 	 * Stores accept, language, body, headers, etc.
+ 	 *
+-	 * @var object 
++	 * @var object
+ 	 */
+ 	protected $request = NULL;
+ 
+ 	/**
+ 	 * What is gonna happen in output?
+-	 * 
+-	 * @var object 
++	 *
++	 * @var object
+ 	 */
+ 	protected $response = NULL;
+ 
+ 	/**
+ 	 * Stores DB, keys, key level, etc
+ 	 *
+-	 * @var object 
++	 * @var object
+ 	 */
+ 	protected $rest = NULL;
+ 
+ 	/**
+ 	 * The arguments for the GET request method
+ 	 *
+-	 * @var array 
++	 * @var array
+ 	 */
+ 	protected $_get_args = array();
+ 
+ 	/**
+ 	 * The arguments for the POST request method
+-	 * 
++	 *
+ 	 * @var array
+ 	 */
+ 	protected $_post_args = array();
+@@ -90,14 +110,14 @@ abstract class REST_Controller extends CI_Controller
+ 
+ 	/**
+ 	 * If the request is allowed based on the API key provided.
+-	 * 
++	 *
+ 	 * @var boolean
+ 	 */
+ 	protected $_allow = TRUE;
+ 
+ 	/**
+ 	 * Determines if output compression is enabled
+-	 * 
++	 *
+ 	 * @var boolean
+ 	 */
+ 	protected $_zlib_oc = FALSE;
+@@ -108,23 +128,27 @@ abstract class REST_Controller extends CI_Controller
+ 	 * @var array
+ 	 */
+ 	protected $_supported_formats = array(
+-		'xml' => 'application/xml',
+-		'json' => 'application/json',
+-		'jsonp' => 'application/javascript',
++		'xml'        => 'application/xml',
++		'json'       => 'application/json',
++		'jsonp'      => 'application/javascript',
+ 		'serialized' => 'application/vnd.php.serialized',
+-		'php' => 'text/plain',
+-		'html' => 'text/html',
+-		'csv' => 'application/csv'
++		'php'        => 'text/plain',
++		'html'       => 'text/html',
++		'csv'        => 'application/csv'
+ 	);
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Developers can extend this class and add a check in here.
+ 	 */
+ 	protected function early_checks()
+ 	{
+-		
++
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Constructor function
+ 	 * @todo Document more please.
+@@ -235,15 +259,23 @@ abstract class REST_Controller extends CI_Controller
+ 		}
+ 
+ 		// Load DB if its enabled
+-		if (config_item('rest_database_group') AND (config_item('rest_enable_keys') OR config_item('rest_enable_logging')))
++		if (config_item('rest_use_mongodb') === TRUE)
+ 		{
+-			$this->rest->db = $this->load->database(config_item('rest_database_group'), TRUE);
++			// Load MongoDB active record library
++			$this->load->library('mongo_db');
+ 		}
+-
+-		// Use whatever database is in use (isset returns false)
+-		elseif (@$this->db)
++		else
+ 		{
+-			$this->rest->db = $this->db;
++			if (config_item('rest_database_group') AND (config_item('rest_enable_keys') OR config_item('rest_enable_logging')))
++			{
++				$this->rest->db = $this->load->database(config_item('rest_database_group'), TRUE);
++			}
++
++			// Use whatever database is in use (isset returns false)
++			elseif (@$this->db)
++			{
++				$this->rest->db = $this->db;
++			}
+ 		}
+ 
+ 		// Checking for keys? GET TO WORK!
+@@ -259,11 +291,13 @@ abstract class REST_Controller extends CI_Controller
+ 		}
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Remap
+ 	 *
+-	 * Requests are not made to methods directly, the request will be for 
+-	 * an "object". This simply maps the object and method to the correct 
++	 * Requests are not made to methods directly, the request will be for
++	 * an "object". This simply maps the object and method to the correct
+ 	 * Controller method.
+ 	 *
+ 	 * @param string $object_called
+@@ -337,13 +371,15 @@ abstract class REST_Controller extends CI_Controller
+ 		call_user_func_array(array($this, $controller_method), $arguments);
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Response
+ 	 *
+ 	 * Takes pure data and optionally a status code, then creates the response.
+ 	 *
+ 	 * @param array $data
+-	 * @param null|int $http_code 
++	 * @param null|int $http_code
+ 	 */
+ 	public function response($data = array(), $http_code = null)
+ 	{
+@@ -372,7 +408,7 @@ abstract class REST_Controller extends CI_Controller
+ 					}
+ 				}
+ 			}
+-			
++
+ 			is_numeric($http_code) OR $http_code = 200;
+ 
+ 			// If the format method exists, call and return the output in that format
+@@ -415,6 +451,8 @@ abstract class REST_Controller extends CI_Controller
+ 		exit($output);
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/*
+ 	 * Detect input format
+ 	 *
+@@ -442,12 +480,14 @@ abstract class REST_Controller extends CI_Controller
+ 		return NULL;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Detect format
+ 	 *
+ 	 * Detect which format should be used to output the data.
+-	 * 
+-	 * @return string The output format. 
++	 *
++	 * @return string The output format.
+ 	 */
+ 	protected function _detect_output_format()
+ 	{
+@@ -523,17 +563,19 @@ abstract class REST_Controller extends CI_Controller
+ 		return config_item('rest_default_format');
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Detect method
+ 	 *
+ 	 * Detect which method (POST, PUT, GET, DELETE) is being used
+-	 * 
+-	 * @return string 
++	 *
++	 * @return string
+ 	 */
+ 	protected function _detect_method()
+ 	{
+ 		$method = strtolower($this->input->server('REQUEST_METHOD'));
+-        
++
+ 		if ($this->config->item('enable_emulate_request'))
+ 		{
+ 			if ($this->input->post('_method'))
+@@ -543,7 +585,7 @@ abstract class REST_Controller extends CI_Controller
+ 	        	else if ($this->input->server('HTTP_X_HTTP_METHOD_OVERRIDE'))
+ 		        {
+ 		            $method = strtolower($this->input->server('HTTP_X_HTTP_METHOD_OVERRIDE'));
+-		        }			
++		        }
+ 		}
+ 
+ 		if (in_array($method, array('get', 'delete', 'post', 'put')))
+@@ -554,12 +596,14 @@ abstract class REST_Controller extends CI_Controller
+ 		return 'get';
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Detect API Key
+ 	 *
+ 	 * See if the user has provided an API key
+-	 * 
+-	 * @return boolean 
++	 *
++	 * @return boolean
+ 	 */
+ 	protected function _detect_api_key()
+ 	{
+@@ -577,9 +621,24 @@ abstract class REST_Controller extends CI_Controller
+ 		// Find the key from server or arguments
+ 		if (($key = isset($this->_args[$api_key_variable]) ? $this->_args[$api_key_variable] : $this->input->server($key_name)))
+ 		{
+-			if ( ! ($row = $this->rest->db->where('key', $key)->get(config_item('rest_keys_table'))->row()))
++			// MongoDB?
++			if (config_item('rest_use_mongodb'))
+ 			{
+-				return FALSE;
++				// Query possible existing API key document
++				$document = $this->mongo_db->where('key', $key)->get(config_item('rest_keys_collection'));
++				if (empty($document))
++				{
++					return FALSE;
++				}
++				// Typecast the resulting document to an object, so
++				// we get a unified db independent after-query logic! :p
++				$row = (object) $document[0];
++			}
++			else {
++				if ( ! ($row = $this->rest->db->where('key', $key)->get(config_item('rest_keys_table'))->row()))
++				{
++					return FALSE;
++				}
+ 			}
+ 
+ 			$this->rest->key = $row->key;
+@@ -595,11 +654,13 @@ abstract class REST_Controller extends CI_Controller
+ 		return FALSE;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Detect language(s)
+ 	 *
+ 	 * What language do they want it in?
+-	 * 
++	 *
+ 	 * @return null|string The language code.
+ 	 */
+ 	protected function _detect_lang()
+@@ -630,34 +691,42 @@ abstract class REST_Controller extends CI_Controller
+ 		return $lang;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Log request
+ 	 *
+ 	 * Record the entry for awesomeness purposes
+-	 * 
++	 *
+ 	 * @param boolean $authorized
+-	 * @return object 
++	 * @return object
+ 	 */
+ 	protected function _log_request($authorized = FALSE)
+ 	{
+-		return $this->rest->db->insert(config_item('rest_logs_table'), array(
+-					'uri' => $this->uri->uri_string(),
+-					'method' => $this->request->method,
+-					'params' => $this->_args ? serialize($this->_args) : null,
+-					'api_key' => isset($this->rest->key) ? $this->rest->key : '',
+-					'ip_address' => $this->input->ip_address(),
+-					'time' => function_exists('now') ? now() : time(),
+-					'authorized' => $authorized
+-				));
++		$log = array(
++			'uri' => $this->uri->uri_string(),
++			'method' => $this->request->method,
++			'params' => $this->_args ? serialize($this->_args) : null,
++			'api_key' => isset($this->rest->key) ? $this->rest->key : '',
++			'ip_address' => $this->input->ip_address(),
++			'time' => function_exists('now') ? now() : time(),
++			'authorized' => $authorized,
++		);
++		// Insert into the appropriate database
++		return config_item('rest_use_mongodb') ?
++			$this->mongo_db->insert(config_item('rest_logs_collection'), $log) :
++			$this->rest->db->insert(config_item('rest_logs_table'), $log);
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Limiting requests
+ 	 *
+ 	 * Check if the requests are coming in a tad too fast.
+ 	 *
+-	 * @param string $controller_method The method deing called.
+-	 * @return boolean 
++	 * @param string $controller_method The method being called.
++	 * @return boolean
+ 	 */
+ 	protected function _check_limit($controller_method)
+ 	{
+@@ -672,22 +741,38 @@ abstract class REST_Controller extends CI_Controller
+ 		$limit = $this->methods[$controller_method]['limit'];
+ 
+ 		// Get data on a keys usage
+-		$result = $this->rest->db
++		if (config_item('rest_use_mongodb'))
++		{
++			$result = $this->mongo_db
++				->where('uri', $this->uri->uri_string())
++				->where('api_key', $this->rest->key)
++				->get(config_item('rest_limits_collection'));
++			$result = (object) $result[0];
++		}
++		else
++		{
++			$result = $this->rest->db
+ 				->where('uri', $this->uri->uri_string())
+ 				->where('api_key', $this->rest->key)
+ 				->get(config_item('rest_limits_table'))
+ 				->row();
++		}
+ 
+ 		// No calls yet, or been an hour since they called
+ 		if ( ! $result OR $result->hour_started < time() - (60 * 60))
+ 		{
+-			// Right, set one up from scratch
+-			$this->rest->db->insert(config_item('rest_limits_table'), array(
++			$data = array(
+ 				'uri' => $this->uri->uri_string(),
+ 				'api_key' => isset($this->rest->key) ? $this->rest->key : '',
+ 				'count' => 1,
+ 				'hour_started' => time()
+-			));
++			);
++			// Right, set one up from scratch
++			config_item('rest_use_mongodb') ?
++				$this->mongo_db
++					->insert(config_item('rest_limits_collection'), $data) :
++				$this->rest->db
++					->insert(config_item('rest_limits_table'), $data);
+ 		}
+ 
+ 		// They have called within the hour, so lets update
+@@ -699,7 +784,14 @@ abstract class REST_Controller extends CI_Controller
+ 				return FALSE;
+ 			}
+ 
+-			$this->rest->db
++			// Increase the API usage count
++			config_item('rest_use_mongodb') ?
++				$this->mongo_db
++					->where('uri', $this->uri->uri_string())
++					->where('api_key', $this->rest->key)
++					->inc('count', 1)
++					->update(config_item('rest_limits_collection')) :
++				$this->rest->db
+ 					->where('uri', $this->uri->uri_string())
+ 					->where('api_key', $this->rest->key)
+ 					->set('count', 'count + 1', FALSE)
+@@ -709,13 +801,15 @@ abstract class REST_Controller extends CI_Controller
+ 		return TRUE;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Auth override check
+ 	 *
+-	 * Check if there is a specific auth type set for the current class/method 
++	 * Check if there is a specific auth type set for the current class/method
+ 	 * being called.
+ 	 *
+-	 * @return boolean 
++	 * @return boolean
+ 	 */
+ 	protected function _auth_override_check()
+ 	{
+@@ -762,12 +856,12 @@ abstract class REST_Controller extends CI_Controller
+ 			return true;
+ 		}
+ 
+-		// Return false when there is an override value set but it does not match 
++		// Return false when there is an override value set but it does not match
+ 		// 'basic', 'digest', or 'none'. (the value was misspelled)
+ 		return false;
+ 	}
+ 
+-	// INPUT FUNCTION --------------------------------------------------------------
++	// INPUT FUNCTIONS --------------------------------------------------------------
+ 
+ 	/**
+ 	 * Retrieve a value from the GET request arguments.
+@@ -786,6 +880,8 @@ abstract class REST_Controller extends CI_Controller
+ 		return array_key_exists($key, $this->_get_args) ? $this->_xss_clean($this->_get_args[$key], $xss_clean) : FALSE;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Retrieve a value from the POST request arguments.
+ 	 *
+@@ -803,6 +899,8 @@ abstract class REST_Controller extends CI_Controller
+ 		return $this->input->post($key, $xss_clean);
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Retrieve a value from the PUT request arguments.
+ 	 *
+@@ -820,6 +918,8 @@ abstract class REST_Controller extends CI_Controller
+ 		return array_key_exists($key, $this->_put_args) ? $this->_xss_clean($this->_put_args[$key], $xss_clean) : FALSE;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Retrieve a value from the DELETE request arguments.
+ 	 *
+@@ -837,6 +937,8 @@ abstract class REST_Controller extends CI_Controller
+ 		return array_key_exists($key, $this->_delete_args) ? $this->_xss_clean($this->_delete_args[$key], $xss_clean) : FALSE;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Process to protect from XSS attacks.
+ 	 *
+@@ -854,10 +956,12 @@ abstract class REST_Controller extends CI_Controller
+ 		return $process ? $this->security->xss_clean($val) : $val;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Retrieve the validation errors.
+ 	 *
+-	 * @return array 
++	 * @return array
+ 	 */
+ 	public function validation_errors()
+ 	{
+@@ -873,7 +977,7 @@ abstract class REST_Controller extends CI_Controller
+ 	 *
+ 	 * @param string $username The user's name
+ 	 * @param string $password The user's password
+-	 * @return boolean 
++	 * @return boolean
+ 	 */
+ 	protected function _check_login($username = '', $password = NULL)
+ 	{
+@@ -898,8 +1002,10 @@ abstract class REST_Controller extends CI_Controller
+ 		return TRUE;
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+-	 * @todo document this. 
++	 * @todo document this.
+ 	 */
+ 	protected function _prepare_basic_auth()
+ 	{
+@@ -934,8 +1040,10 @@ abstract class REST_Controller extends CI_Controller
+ 		}
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+-	 * @todo Document this. 
++	 * @todo Document this.
+ 	 */
+ 	protected function _prepare_digest_auth()
+ 	{
+@@ -961,7 +1069,7 @@ abstract class REST_Controller extends CI_Controller
+ 			$digest_string = "";
+ 		}
+ 
+-		// The $_SESSION['error_prompted'] variable is used to ask the password 
++		// The $_SESSION['error_prompted'] variable is used to ask the password
+ 		// again if none given or if the user enters wrong auth information.
+ 		if (empty($digest_string))
+ 		{
+@@ -993,6 +1101,8 @@ abstract class REST_Controller extends CI_Controller
+ 		}
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Check if the client's ip is in the 'rest_ip_whitelist' config
+ 	 */
+@@ -1013,10 +1123,12 @@ abstract class REST_Controller extends CI_Controller
+ 		}
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * @todo Document this.
+ 	 *
+-	 * @param string $nonce 
++	 * @param string $nonce
+ 	 */
+ 	protected function _force_login($nonce = '')
+ 	{
+@@ -1032,11 +1144,13 @@ abstract class REST_Controller extends CI_Controller
+ 		$this->response(array('status' => false, 'error' => 'Not authorized'), 401);
+ 	}
+ 
++	// ------------------------------------------------------------------------
++
+ 	/**
+ 	 * Force it into an array
+ 	 *
+ 	 * @param object|array $data
+-	 * @return array 
++	 * @return array
+ 	 */
+ 	protected function _force_loopable($data)
+ 	{
+@@ -1054,13 +1168,17 @@ abstract class REST_Controller extends CI_Controller
+ 
+ 	/**
+ 	 * Encode as JSONP
+-	 * 
++	 *
+ 	 * @param array $data The input data.
+-	 * @return string The JSONP data string (loadable from Javascript). 
++	 * @return string The JSONP data string (loadable from Javascript).
+ 	 */
+ 	protected function _format_jsonp($data = array())
+ 	{
+ 		return $this->get('callback').'('.json_encode($data).')';
+ 	}
+ 
+-}
+\ No newline at end of file
++}
++// END REST_Controller Class
++
++/* End of file REST_Controller.php */
++/* Location: ./application/libraries/REST_Controller.php */
+\ No newline at end of file
+-- 
+1.7.8.msysgit.0
+
