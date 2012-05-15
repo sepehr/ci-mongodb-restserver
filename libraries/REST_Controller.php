@@ -747,7 +747,7 @@ abstract class REST_Controller extends CI_Controller {
 				->where('uri', $this->uri->uri_string())
 				->where('api_key', $this->rest->key)
 				->get(config_item('rest_limits_collection'));
-			$result = (object) $result[0];
+			$result = empty($result) ? FALSE : (object) $result[0];
 		}
 		else
 		{
