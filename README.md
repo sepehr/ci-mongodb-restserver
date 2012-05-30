@@ -6,7 +6,7 @@ This is just a minor fork of Phil Sturgeon's [CodeIgniter REST Server](https://g
 ## Requirements
 * PHP 5.2+
 * CodeIgniter 2.1.0+
-* [CodeIgniter MongoDB Active Record](https://github.com/alexbilbie/codeigniter-mongodb-library/tree/v2) library (v2)
+* [CodeIgniter MongoDB Active Record Library](https://github.com/alexbilbie/codeigniter-mongodb-library/tree/v2)
 
 ## Installation
 
